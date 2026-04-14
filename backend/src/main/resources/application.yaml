@@ -1,0 +1,26 @@
+spring:
+  application:
+    name: vi-ecommerce-absa-system
+  # Cấu hình để Spring Boot đọc file .env
+  config:
+    import: optional:file:.env[.properties]
+
+  datasource:
+    # Gọi các biến từ file .env
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: none # Giữ nguyên 'none' vì đã tự tạo bảng
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+    show-sql: true
+
+ai:
+  service:
+    url: ${AI_SERVICE_URL}
+
+server:
+  port: 8080

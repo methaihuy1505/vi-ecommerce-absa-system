@@ -3,24 +3,15 @@ import re
 import numpy as np
 from underthesea import word_tokenize
 
-print("Đang tải 'não bộ' F1-0.71 lên...")
-vectorizer = joblib.load('models/tfidf_vectorizer.pkl')
-model = joblib.load('models/absa_ml_model.pkl')
-label_names = joblib.load('models/label_names.pkl')
-
-# ĐỒNG NHẤT THRESHOLD VỚI WEB API (Ép cứng các nhãn Neutral không được hiện linh tinh)
-CLASS_THRESHOLDS = {
-    'BATTERY': 0.45,       'BATTERY_Neutral': 0.65,
-    'CAMERA': 0.50,        'CAMERA_Neutral': 0.65,
-    'PERFORMANCE': 0.50,   'PERFORMANCE_Neutral': 0.65,
-    'GENERAL': 0.60,       'GENERAL_Neutral': 0.65,
-    'SCREEN': 0.55,        'SCREEN_Neutral': 0.65,
-    'DESIGN': 0.50,        'DESIGN_Neutral': 0.65,
-    'FEATURES': 0.50,      'FEATURES_Neutral': 0.65,
-    'PRICE': 0.50,         'PRICE_Neutral': 0.65,
-    'SER&ACC': 0.50,       'SER&ACC_Neutral': 0.65,
-    'STORAGE': 0.50,       'STORAGE_Neutral': 0.65,
-}
+# Khởi tạo
+print("Đang nạp 'bộ não' F1-0.71 lên Hệ thống Dự đoán...")
+try:
+    vectorizer = joblib.load('models/tfidf_vectorizer.pkl')
+    model = joblib.load('models/absa_ml_model.pkl')
+    label_names = joblib.load('models/label_names.pkl')
+except Exception as e:
+    print(f"Lỗi tải model: {e}")
+    exit()
 
 def clean_text(text):
     text = str(text).lower()
@@ -28,39 +19,69 @@ def clean_text(text):
     text = word_tokenize(text, format="text")
     return re.sub(r'\s+', ' ', text).strip()
 
-def predict_comment(comment):
+def predict_comment_hybrid(comment):
     cleaned = clean_text(comment)
     vec = vectorizer.transform([cleaned])
     
-    # Dùng decision_function gốc của SVM
+    # Bước 1: AI tự phán (1/0)
+    predictions = model.predict(vec)[0]
     decision_scores = model.decision_function(vec)[0]
     
-    results = []
-    for i, score in enumerate(decision_scores):
-        label = label_names[i]
-        aspect = label.split('_')[0]
-        
-        # Lấy threshold riêng: ưu tiên nhãn cụ thể trước (ví dụ BATTERY_Neutral), không có mới lấy Aspect
-        threshold = CLASS_THRESHOLDS.get(label, CLASS_THRESHOLDS.get(aspect, 0.50))
-        
-        # Hàm Sigmoid biến đổi khoảng cách thành xác suất pseudo
-        pseudo_prob = float(1 / (1 + np.exp(-score)))
-        
-        if pseudo_prob >= threshold:
-            results.append(f"{label} ({pseudo_prob*100:.1f}%)")
-            
-    return results
+    raw_results = {}
+    for i, is_predicted in enumerate(predictions):
+        if is_predicted == 1:
+             label = label_names[i]
+             score = decision_scores[i]
+             pseudo_prob = float(1 / (1 + np.exp(-score)))
+             raw_results[label] = round(pseudo_prob * 100, 1)
 
+    # Bước 2: Smart Filter giữ lại 1 Aspect cao nhất
+    aspect_groups = {}
+    for label, prob in raw_results.items():
+        aspect = label.split('_')[0]
+        if aspect not in aspect_groups:
+            aspect_groups[aspect] = []
+        aspect_groups[aspect].append((label, prob))
+
+    final_results = {}
+    for aspect, labels in aspect_groups.items():
+        best_label = max(labels, key=lambda x: x[1])
+        final_results[best_label[0]] = best_label[1]
+            
+    return final_results
+
+# 20 DỮ LIỆU MẪU CHUẨN ĐỂ DEMO
 test_comments = [
-    "Máy này thiết kế đẹp lung linh, nhưng pin thì tụt nhanh như tụt quần, giá lại còn chát quá!",
-    "Chơi game liên quân mượt phết, nhân viên thegioididong phục vụ cực kỳ tận tình",
-    "Camera chụp đêm bị nhòe, tao thật sự thất vọng về sản phẩm này."
+    "Máy đẹp, cầm rất nhẹ tay nhờ khung Titan, nhưng giá hơi cao.",
+    "Pin dùng được cả ngày, chơi game cực mượt không nóng máy.",
+    "Thiết kế mỏng nhẹ quá tuyệt cho dân văn phòng, mà pin lại trâu.",
+    "Màn hình 240Hz làm việc hay chơi game đều phê, mỗi tội quạt hơi ồn.",
+    "Chống ồn quá đỉnh, đeo êm tai không bị đau khi dùng lâu.",
+    "Camera chụp đêm bị nhòe, tao thật sự thất vọng về sản phẩm này.",
+    "Loa nghe nhạc vàng rất ấm, bass lực nhưng kết nối bluetooth đôi khi bị chập chờn.",
+    "Bàn phím gõ rất sướng tay, nhưng đèn LED hơi yếu không dùng được buổi tối.",
+    "Giá này thì không đòi hỏi gì hơn, hiệu năng ổn định cho sinh viên.",
+    "Mua mới mắc quá, mua cũ hiệu năng cũng không kém mà giá rẻ hơn.",
+    "Sạc siêu nhanh, chỉ 15 phút là đầy 50%, cực kỳ hài lòng.",
+    "Máy hay bị lag khi mở nhiều tab Chrome, thất vọng về RAM quá.",
+    "Màu sắc màn hình bị ám vàng, xem phim không thực tế chút nào.",
+    "Vỏ nhựa nhìn hơi rẻ tiền nhưng bù lại phần cứng bên trong rất mạnh.",
+    "Giao hàng nhanh, đóng gói kỹ, máy dùng ổn trong tầm giá.",
+    "Nút bấm hơi cứng, dùng lâu bị mỏi ngón tay, cần cải thiện công thái học.",
+    "Âm thanh bị rè khi bật âm lượng tối đa, thất vọng về loa.",
+    "Phần mềm hay bị văng ứng dụng đột ngột, tối ưu hóa quá kém.",
+    "Kết nối 5G rất nhanh và ổn định, bắt sóng khỏe ở vùng sâu vùng xa.",
+    "Chuột cầm rất vừa tay, các nút phụ hỗ trợ công việc rất tốt."
 ]
 
-print("\n" + "="*50)
-print("BẮT ĐẦU DỰ ĐOÁN THỰC TẾ:")
-print("="*50)
-for c in test_comments:
-    print(f"Khách: '{c}'")
-    print(f"AI   : {predict_comment(c)}")
-    print("-" * 50)
+print("\n" + "="*85)
+print(f"{'STT':<5} | {'DỰ ĐOÁN AI (PREDICT GỐC + SMART FILTER)':<55}")
+print("-" * 85)
+
+for idx, c in enumerate(test_comments, 1):
+    final_res = predict_comment_hybrid(c)
+    res_str = str(final_res) if final_res else "{}"
+    print(f"{idx:<5} | {res_str}")
+    if idx % 5 == 0: print("-" * 85)
+
+print("="*85)
